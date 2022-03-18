@@ -148,6 +148,27 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
             "ConstraintSystem::extend must be implemented for types implementing ConstraintSystem"
         );
     }
+
+    fn extend_from_element(&mut self, mut _other: Self, _unit: &Self) {
+        unimplemented!(
+            "ConstraintSystem::extend_from_element must be implemented for types implementing ConstraintSystem"
+        );
+    }
+
+    // Create a vector of CSs with the same porperties
+    // Later these CSs can be aggregated to the one
+    // It allows to calculate synthesize-functions in parallel for several copies of the CS and later aggregate them
+    fn make_vector(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+    }
+
+    fn make_vector_copy(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+    }
+
+    fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
+        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+    }
 }
 
 /// This is a "namespaced" constraint system which borrows a constraint system (pushing
@@ -214,6 +235,18 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
     fn get_root(&mut self) -> &mut Self::Root {
         self.0.get_root()
     }
+
+    fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        self.0.make_vector(size)
+    }
+
+    fn make_vector_copy(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        self.0.make_vector_copy(size)
+    }
+
+    fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
+        self.0.make_copy()
+    }
 }
 
 impl<'a, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> Drop for Namespace<'a, Scalar, CS> {
@@ -276,5 +309,17 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
 
     fn get_root(&mut self) -> &mut Self::Root {
         (**self).get_root()
+    }
+
+    fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        (**self).make_vector(size)
+    }
+
+    fn make_vector_copy(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
+        (**self).make_vector_copy(size)
+    }
+
+    fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
+        (**self).make_copy()
     }
 }
