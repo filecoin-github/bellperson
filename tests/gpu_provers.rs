@@ -1,23 +1,21 @@
-use bellperson::{bls::Engine, Circuit, ConstraintSystem, SynthesisError};
-use ff::{Field, PrimeField};
+use bellperson::{Circuit, ConstraintSystem, SynthesisError};
+use ff::PrimeField;
 
 #[derive(Clone)]
 pub struct DummyDemo {
     pub interations: u64,
 }
 
-impl<E: Engine> Circuit<E> for DummyDemo {
-    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-        let mut x_val = E::Fr::from_str("2");
-        let mut x = cs.alloc(|| "", || x_val.ok_or(SynthesisError::AssignmentMissing))?;
+impl<Scalar: PrimeField> Circuit<Scalar> for DummyDemo {
+    fn synthesize<CS: ConstraintSystem<Scalar>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+        let mut x_val = Scalar::from(2u64);
+        let mut x = cs.alloc(|| "", || Ok(x_val))?;
 
         for _ in 0..self.interations {
             // Allocate: x * x = x2
-            let x2_val = x_val.map(|mut e| {
-                e.square();
-                e
-            });
-            let x2 = cs.alloc(|| "", || x2_val.ok_or(SynthesisError::AssignmentMissing))?;
+            let x2_val = x_val.square();
+
+            let x2 = cs.alloc(|| "", || Ok(x2_val))?;
 
             // Enforce: x * x = x2
             cs.enforce(|| "", |lc| lc + x, |lc| lc + x, |lc| lc + x2);
@@ -28,7 +26,7 @@ impl<E: Engine> Circuit<E> for DummyDemo {
 
         cs.enforce(
             || "",
-            |lc| lc + (x_val.unwrap(), CS::one()),
+            |lc| lc + (x_val, CS::one()),
             |lc| lc + CS::one(),
             |lc| lc + x,
         );
@@ -37,14 +35,14 @@ impl<E: Engine> Circuit<E> for DummyDemo {
     }
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "opencl"))]
 #[test]
 pub fn test_parallel_prover() {
-    use bellperson::bls::Bls12;
     use bellperson::groth16::{
-        create_proof_batch, generate_random_parameters,
+        create_random_proof, create_random_proof_in_priority, generate_random_parameters,
         prepare_verifying_key, verify_proof,
     };
+    use blstrs::Bls12;
     use rand::thread_rng;
     use std::thread;
     use std::time::{Duration, Instant};
@@ -81,8 +79,9 @@ pub fn test_parallel_prover() {
         for _ in 0..10 {
             let now = Instant::now();
 
-            let proof_higher = create_proof_batch(vec![c.clone()], &params).unwrap();
-            assert!(verify_proof(&pvk, &proof_higher[0], &[]).unwrap());
+            let rng = &mut thread_rng();
+            let proof_higher = create_random_proof_in_priority(c.clone(), &params, rng).unwrap();
+            assert!(verify_proof(&pvk, &proof_higher, &[]).unwrap());
 
             println!(
                 "Higher proof gen finished in {}s and {}ms",
@@ -102,8 +101,8 @@ pub fn test_parallel_prover() {
         for _ in 0..10 {
             let now = Instant::now();
 
-            let proof_lower = create_proof_batch(vec![c2.clone()], &params2).unwrap();
-            assert!(verify_proof(&pvk2, &proof_lower[0], &[]).unwrap());
+            let proof_lower = create_random_proof(c2.clone(), &params2, rng).unwrap();
+            assert!(verify_proof(&pvk2, &proof_lower, &[]).unwrap());
 
             println!(
                 "Lower proof gen finished in {}s and {}ms",

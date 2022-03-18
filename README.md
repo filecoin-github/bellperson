@@ -8,17 +8,12 @@ booleans and number abstractions.
 
 ## Backend
 
-There are currently two backends available for the implementation of Bls12 381:
+There is currently one backend available for the implementation of Bls12 381:
 - [`blstrs`](https://github.com/filecoin-project/blstrs) - optimized with hand tuned assembly, using [blst](https://github.com/supranational/blst)
-- [`paired`](https://github.com/filecoin-project/paired) - pure Rust implementation
-
-They can be selected at compile time with the mutually exclusive features `blst` and `pairing`. Specifying one of them is enough for a working library, no additional features need to be set.
-
-The default for now is `blst`, as the secure and audited choice.  Note that `pairing` is deprecated and may be removed in the future.
 
 ## GPU
 
-This fork contains GPU parallel acceleration to the FFT and Multiexponentation algorithms in the groth16 prover codebase under the compilation feature `gpu`, it can be used in combination with `blst` or `pairing`.
+This fork contains GPU parallel acceleration to the FFT and Multiexponentation algorithms in the groth16 prover codebase under the compilation features `cuda` and `opencl`.
 
 ### Requirements
 - NVIDIA or AMD GPU Graphics Driver
@@ -28,120 +23,71 @@ This fork contains GPU parallel acceleration to the FFT and Multiexponentation a
 
 ### Environment variables
 
-The gpu extension contains some env vars that may be set externally to this library. 
+The gpu extension contains some env vars that may be set externally to this library.
 
-- `FIL_ZK_CUSTOM_GPU`
+- `BELLMAN_NO_GPU`
 
-    Allows adding a GPU that is not in the tested list. This requires providing the name of the GPU device and the number of cores in the format ["name:cores"].
-
-    ```rust
-    // Example
-    env::set_var("FIL_ZK_CUSTOM_GPU", "GeForce RTX 2080 Ti:4352, GeForce GTX 1060:1280");
-    ```
-
-- `FIL_ZK_CPU_UTILIZATION`
-
-    - Possible values: `[0, 1]` (float)
-    - Default value: `0`
-
-    The proportion of the multi-exponentiation calculation (commit2 phase) that will be moved to CPU in parallel to the GPU. For example, 0.1 = 10% of the calculations are proceeding on CPU. It allows keeping all hardware occupied and decreases C2 timings. To get the best performance, the value of the variable must be higher for configuration with good CPU and weak GPU and vice versa. 
+    Will disable the GPU feature from the library and force usage of the CPU.
 
     ```rust
     // Example
-    env::set_var("FIL_ZK_CPU_UTILIZATION", "0.05");
+    env::set_var("BELLMAN_NO_GPU", "1");
     ```
 
-- `FIL_ZK_DISABLE_FFT_GPU`
+- `BELLMAN_VERIFIER`
 
-    - Possible values: `0, 1`
-    - Default value: `0`
+    Chooses the device in which the batched verifier is going to run. Can be `cpu`, `gpu` or `auto`.
 
-    Defines is GPUs are used during FFT (commit2 phase) or not. FIL_ZK_DISABLE_FFT_GPU=1 uses pure CPU calculations for FFT that increases the overall commit2 phase time. 
+    ```rust
+    Example
+    env::set_var("BELLMAN_VERIFIER", "gpu");
+    ```
+
+- `BELLMAN_CUSTOM_GPU`
+
+    Will allow for adding a GPU not in the tested list. This requires researching the name of the GPU device and the number of cores in the format `["name:cores"]`.
 
     ```rust
     // Example
-    env::set_var("FIL_ZK_DISABLE_FFT_GPU", "1");
+    env::set_var("BELLMAN_CUSTOM_GPU", "GeForce RTX 2080 Ti:4352, GeForce GTX 1060:1280");
     ```
 
-- `FIL_ZK_GPU_MEMORY_PADDING`
+- `BELLMAN_CPU_UTILIZATION`
 
-    - Possible values: `[0, 1]` (float)
-    - Default value: `0.1`
-
-    Determines the proportion of free memory, e.g. 0.1 ≅ 10% (not exactly, but close) of free GPU memory during commit2 phase.
-
-    __Important note:__ commit2 phase contains two different algorithms that use GPU: FFT and multi-exponentiation. Currently, `FIL_ZK_GPU_MEMORY_PADDING` restricts only multi-exponentiation algorithm. However, FFT uses less GPU memory than mutli-exponentiation so the variable may be used to make the GPU memory consumption eqaul between these algorithms. 
+    Can be set in the interval [0,1] to designate a proportion of the multiexponenation calculation to be moved to cpu in parallel to the GPU to keep all hardware occupied.
 
     ```rust
     // Example
-    env::set_var("FIL_ZK_GPU_MEMORY_PADDING", "0.35");
+    env::set_var("BELLMAN_CPU_UTILIZATION", "0.5");
     ```
 
-- `FIL_ZK_P2_GPU_REUSE`
+- `RAYON_NUM_THREADS`
 
-    - Possible values: `[1, 20]`
-    - Default value: `1`
+   Restricts the number of threads used in the library to roughly twice that number (best effort). In the past this was done using `BELLMAN_NUM_CPUS` which is now deprecated. The default is set to the number of logical cores reported on the machine.
 
-    How many instances of P2 can use the same GPU in parallel settings. 
+   ```rust
+    // Example
+    env::set_var("RAYON_NUM_THREADS", "6");
+   ```
+
+ - `BELLMAN_GPU_FRAMEWORK`
+
+     Bellman can be compiled with both, OpenCL and CUDA support. When both are available, `BELLMAN_GPU_FRAMEWORK` can be used to set it to a specific one, either `cuda` or `opencl`.
 
     ```rust
     // Example
-    env::set_var("FIL_ZK_P2_GPU_REUSE", "2");
+    env::set_var("BELLMAN_GPU_FRAMEWORK", "opencl");
     ```
 
-- `FIL_ZK_PARAMS_PRELOAD`
+ - `BELLMAN_CUDA_NVCC_ARGS`
 
-    - Possible values: `0, 1`
-    - Default value: `0`
-
-    Defines the implementation of Groth's SNARK proof that is used in commit2-phase. 1 use the implementation with preloaded data for all SNARK protocol. It increases the amount of used RAM but decreases the proof time. The time-bonus obtained from the preloaded data depends on the hardware and should be tested in practice. 
+     By default the CUDA kernel is compiled for several architectures, which may take a long time. `BELLMAN_CUDA_NVCC_ARGS` can be used to override those arguments. The input and output file will still be automatically set.
 
     ```rust
-    // Example
-    env::set_var("FIL_ZK_PARAMS_PRELOAD", "1");
+    // Example for compiling the kernel for only the Turing architecture
+    env::set_var("BELLMAN_CUDA_NVCC_ARGS", "--fatbin --gpu-architecture=sm_75 --generate-code=arch=compute_75,code=sm_75");
     ```
 
-- `FIL_ZK_MAX_WINDOW`
-
-    - Possible values: `[5, 17]` (integer)
-    - Default value: `10`
-    
-
-Defines the window size for the multi-exponentiation algorithm. A higher value means more serial work in each parallel thread (thus fewer parallel GPU threads in general). 
-    
-**Important note:** The variable defines the *maximum* window size. The algorithm uses a smaller window size if it's enough for optimal performance.
-    
-```rust
-    // Example
-    env::set_var("FIL_ZK_MAX_WINDOW", "12");
-```
-
-- `FIL_ZK_WORK_SIZE_MULTIPLIER`
-
-    - Possible values: `[0.1, 10]` (float)
-    - Default value: `2`
-
-    Defines the multiplier for GPU load as the number of simultaneous threads. The higher values of the variable - the more threads. 
-
-    ```rust
-    // Example
-    env::set_var("FIL_ZK_WORK_SIZE_MULTIPLIER", "1.2");
-    ```
-
-- `FIL_ZK_CHUNK_SIZE_MULTIPLIER`
-
-    - Possible values: `[1, 10]` (float)
-    - Default value: `2`
-
-    Defines the multiplier for GPU memory usage. The higher values of the variable - the more GPU memory is occupied by each thread of the multi-exponentiation algorithm of the commit2 phase.
-    Allows controlling the amount of data proceeded by each thread without changing the overall amount of threads (unlike `FIL_ZK_MAX_WINDOW` and `FIL_ZK_WORK_SIZE_MULTIPLIER`). 
-
-    ```rust
-    // Example
-    env::set_var("FIL_ZK_CHUNK_SIZE_MULTIPLIER", "2.5");
-    ```
-
-    
 
 #### Supported / Tested Cards
 
@@ -176,27 +122,25 @@ Depending on the size of the proof being passed to the gpu for work, certain car
 
 ### Running Tests
 
-To run using the `pairing` backend, you can use:
-
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo test --release --all --no-default-features --features pairing
+RUSTFLAGS="-C target-cpu=native" cargo test --release --all
 ```
 
-To run using both the `gpu` and `blst` backend, you can use:
+To run using CUDA and OpenCL, you can use:
 
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo test --release --all --no-default-features --features gpu,blst
+RUSTFLAGS="-C target-cpu=native" cargo test --release --all --features cuda,opencl
 ```
 
 To run the multiexp_consistency test you can use:
 
 ```bash
-RUST_LOG=info cargo test --features gpu -- --exact multiexp::gpu_multiexp_consistency --nocapture
+RUST_LOG=info cargo test --features cuda,opencl -- --exact multiexp::gpu_multiexp_consistency --nocapture
 ```
 
 ### Considerations
 
-Bellperson uses `rust-gpu-tools` as its OpenCL backend, therefore you may see a
+Bellperson uses `rust-gpu-tools` as its CUDA/OpenCL backend, therefore you may see a
 directory named `~/.rust-gpu-tools` in your home folder, which contains the
 compiled binaries of OpenCL kernels used in this repository.
 

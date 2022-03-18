@@ -1,9 +1,10 @@
-use crate::bls::Engine;
-use groupy::{CurveAffine, EncodedPoint};
+use group::{prime::PrimeCurveAffine, UncompressedEncoding};
+use pairing::MultiMillerLoop;
 
 use crate::SynthesisError;
 
 use memmap::Mmap;
+use rayon::prelude::*;
 
 use std::fs::File;
 use std::io;
@@ -11,10 +12,12 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{PreparedVerifyingKey, VerifyingKey, ParameterGetter};
-use rayon::prelude::*;
+use super::{ParameterSource, PreparedVerifyingKey, VerifyingKey};
 
-pub struct MappedParameters<E: Engine> {
+pub struct MappedParameters<E>
+where
+    E: MultiMillerLoop,
+{
     /// The parameter file we're reading from.  
     pub param_file_path: PathBuf,
     /// The file descriptor we have mmaped.
@@ -49,12 +52,18 @@ pub struct MappedParameters<E: Engine> {
     pub checked: bool,
 }
 
-impl<'a, E: Engine> ParameterGetter<E> for &'a MappedParameters<E> {
-    fn get_vk(&self) -> Result<&VerifyingKey<E>, SynthesisError> {
+impl<'a, E> ParameterSource<E> for &'a MappedParameters<E>
+where
+    E: MultiMillerLoop,
+{
+    type G1Builder = (Arc<Vec<E::G1Affine>>, usize);
+    type G2Builder = (Arc<Vec<E::G2Affine>>, usize);
+
+    fn get_vk(&self, _: usize) -> Result<&VerifyingKey<E>, SynthesisError> {
         Ok(&self.vk)
     }
 
-    fn get_h(&self) -> Result<Arc<Vec<E::G1Affine>>, SynthesisError> {
+    fn get_h(&self, _num_h: usize) -> Result<Self::G1Builder, SynthesisError> {
         let builder = self
             .h
             .par_iter()
@@ -62,10 +71,10 @@ impl<'a, E: Engine> ParameterGetter<E> for &'a MappedParameters<E> {
             .map(|h| read_g1::<E>(&self.params, h, self.checked))
             .collect::<Result<_, _>>()?;
 
-        Ok(Arc::new(builder))
+        Ok((Arc::new(builder), 0))
     }
 
-    fn get_l(&self) -> Result<Arc<Vec<E::G1Affine>>, SynthesisError> {
+    fn get_l(&self, _num_l: usize) -> Result<Self::G1Builder, SynthesisError> {
         let builder = self
             .l
             .par_iter()
@@ -73,10 +82,14 @@ impl<'a, E: Engine> ParameterGetter<E> for &'a MappedParameters<E> {
             .map(|l| read_g1::<E>(&self.params, l, self.checked))
             .collect::<Result<_, _>>()?;
 
-        Ok(Arc::new(builder))
+        Ok((Arc::new(builder), 0))
     }
 
-    fn get_a(&self) -> Result<Arc<Vec<E::G1Affine>>, SynthesisError> {
+    fn get_a(
+        &self,
+        num_inputs: usize,
+        _num_a: usize,
+    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError> {
         let builder = self
             .a
             .par_iter()
@@ -86,10 +99,31 @@ impl<'a, E: Engine> ParameterGetter<E> for &'a MappedParameters<E> {
 
         let builder: Arc<Vec<_>> = Arc::new(builder);
 
-        Ok(builder)
+        Ok(((builder.clone(), 0), (builder, num_inputs)))
     }
 
-    fn get_b_g2(&self) -> Result<Arc<Vec<E::G2Affine>>, SynthesisError> {
+    fn get_b_g1(
+        &self,
+        num_inputs: usize,
+        _num_b_g1: usize,
+    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError> {
+        let builder = self
+            .b_g1
+            .par_iter()
+            .cloned()
+            .map(|b_g1| read_g1::<E>(&self.params, b_g1, self.checked))
+            .collect::<Result<_, _>>()?;
+
+        let builder: Arc<Vec<_>> = Arc::new(builder);
+
+        Ok(((builder.clone(), 0), (builder, num_inputs)))
+    }
+
+    fn get_b_g2(
+        &self,
+        num_inputs: usize,
+        _num_b_g2: usize,
+    ) -> Result<(Self::G2Builder, Self::G2Builder), SynthesisError> {
         let builder = self
             .b_g2
             .par_iter()
@@ -99,14 +133,14 @@ impl<'a, E: Engine> ParameterGetter<E> for &'a MappedParameters<E> {
 
         let builder: Arc<Vec<_>> = Arc::new(builder);
 
-        Ok(builder)
+        Ok(((builder.clone(), 0), (builder, num_inputs)))
     }
 }
 
 // A re-usable method for parameter loading via mmap.  Unlike the
 // internal ones used elsewhere, this one does not update offset state
 // and simply does the cast and transform needed.
-pub fn read_g1<E: Engine>(
+pub fn read_g1<E: MultiMillerLoop>(
     mmap: &Mmap,
     range: Range<usize>,
     checked: bool,
@@ -115,31 +149,35 @@ pub fn read_g1<E: Engine>(
     // Safety: this operation is safe, because it's simply
     // casting to a known struct at the correct offset, given
     // the structure of the on-disk data.
-    let repr =
-        unsafe { *(ptr as *const [u8] as *const <E::G1Affine as CurveAffine>::Uncompressed) };
+    let repr = unsafe {
+        &*(ptr as *const [u8] as *const <E::G1Affine as UncompressedEncoding>::Uncompressed)
+    };
 
-    if checked {
-        repr.into_affine()
-    } else {
-        repr.into_affine_unchecked()
-    }
-    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    .and_then(|e| {
-        if e.is_zero() {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "point at infinity",
-            ))
+    let affine: E::G1Affine = {
+        let affine_opt = if checked {
+            E::G1Affine::from_uncompressed(&repr)
         } else {
-            Ok(e)
-        }
-    })
+            E::G1Affine::from_uncompressed_unchecked(&repr)
+        };
+
+        Option::from(affine_opt)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not on curve"))
+    }?;
+
+    if affine.is_identity().into() {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "point at infinity",
+        ))
+    } else {
+        Ok(affine)
+    }
 }
 
 // A re-usable method for parameter loading via mmap.  Unlike the
 // internal ones used elsewhere, this one does not update offset state
 // and simply does the cast and transform needed.
-pub fn read_g2<E: Engine>(
+pub fn read_g2<E: MultiMillerLoop>(
     mmap: &Mmap,
     range: Range<usize>,
     checked: bool,
@@ -148,23 +186,27 @@ pub fn read_g2<E: Engine>(
     // Safety: this operation is safe, because it's simply
     // casting to a known struct at the correct offset, given
     // the structure of the on-disk data.
-    let repr =
-        unsafe { *(ptr as *const [u8] as *const <E::G2Affine as CurveAffine>::Uncompressed) };
+    let repr = unsafe {
+        &*(ptr as *const [u8] as *const <E::G2Affine as UncompressedEncoding>::Uncompressed)
+    };
 
-    if checked {
-        repr.into_affine()
-    } else {
-        repr.into_affine_unchecked()
-    }
-    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    .and_then(|e| {
-        if e.is_zero() {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "point at infinity",
-            ))
+    let affine: E::G2Affine = {
+        let affine_opt = if checked {
+            E::G2Affine::from_uncompressed(&repr)
         } else {
-            Ok(e)
-        }
-    })
+            E::G2Affine::from_uncompressed_unchecked(&repr)
+        };
+
+        Option::from(affine_opt)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not on curve"))
+    }?;
+
+    if affine.is_identity().into() {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "point at infinity",
+        ))
+    } else {
+        Ok(affine)
+    }
 }

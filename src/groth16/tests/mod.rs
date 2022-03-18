@@ -1,6 +1,5 @@
-use crate::bls::Engine;
-
 use ff::{Field, PrimeField};
+use group::{Curve, Group};
 use rand_core::SeedableRng;
 use rand_xorshift::XorShiftRng;
 
@@ -8,29 +7,30 @@ mod dummy_engine;
 use self::dummy_engine::*;
 
 use std::marker::PhantomData;
+use std::ops::{AddAssign, Mul, MulAssign, SubAssign};
 
 use super::{
-    create_proof_batch, generate_parameters, prepare_verifying_key, verify_proof,
+    create_proof, create_proof_batch, generate_parameters, prepare_verifying_key, verify_proof,
 };
 use crate::{Circuit, ConstraintSystem, SynthesisError};
 
 #[derive(Clone)]
-struct XorDemo<E: Engine> {
+struct XorDemo<Scalar: PrimeField> {
     a: Option<bool>,
     b: Option<bool>,
-    _marker: PhantomData<E>,
+    _marker: PhantomData<Scalar>,
 }
 
-impl<E: Engine> Circuit<E> for XorDemo<E> {
-    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+impl<Scalar: PrimeField> Circuit<Scalar> for XorDemo<Scalar> {
+    fn synthesize<CS: ConstraintSystem<Scalar>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         let a_var = cs.alloc(
             || "a",
             || {
                 if self.a.is_some() {
                     if self.a.unwrap() {
-                        Ok(E::Fr::one())
+                        Ok(Scalar::one())
                     } else {
-                        Ok(E::Fr::zero())
+                        Ok(Scalar::zero())
                     }
                 } else {
                     Err(SynthesisError::AssignmentMissing)
@@ -50,9 +50,9 @@ impl<E: Engine> Circuit<E> for XorDemo<E> {
             || {
                 if self.b.is_some() {
                     if self.b.unwrap() {
-                        Ok(E::Fr::one())
+                        Ok(Scalar::one())
                     } else {
-                        Ok(E::Fr::zero())
+                        Ok(Scalar::zero())
                     }
                 } else {
                     Err(SynthesisError::AssignmentMissing)
@@ -72,9 +72,9 @@ impl<E: Engine> Circuit<E> for XorDemo<E> {
             || {
                 if self.a.is_some() && self.b.is_some() {
                     if self.a.unwrap() ^ self.b.unwrap() {
-                        Ok(E::Fr::one())
+                        Ok(Scalar::one())
                     } else {
-                        Ok(E::Fr::zero())
+                        Ok(Scalar::zero())
                     }
                 } else {
                     Err(SynthesisError::AssignmentMissing)
@@ -97,14 +97,14 @@ impl<E: Engine> Circuit<E> for XorDemo<E> {
 fn test_xordemo() {
     let g1 = Fr::one();
     let g2 = Fr::one();
-    let alpha = Fr::from_str("48577").unwrap();
-    let beta = Fr::from_str("22580").unwrap();
-    let gamma = Fr::from_str("53332").unwrap();
-    let delta = Fr::from_str("5481").unwrap();
-    let tau = Fr::from_str("3673").unwrap();
+    let alpha = Fr::from(48577u64);
+    let beta = Fr::from(22580u64);
+    let gamma = Fr::from(53332u64);
+    let delta = Fr::from(5481u64);
+    let tau = Fr::from(3673u64);
 
     let params = {
-        let c = XorDemo::<DummyEngine> {
+        let c = XorDemo::<Fr> {
             a: None,
             b: None,
             _marker: PhantomData,
@@ -131,22 +131,22 @@ fn test_xordemo() {
     let mut root_of_unity = Fr::root_of_unity();
 
     // We expect this to be a 2^10 root of unity
-    assert_eq!(Fr::one(), root_of_unity.pow(&[1 << 10]));
+    assert_eq!(Fr::one(), root_of_unity.pow_vartime(&[1 << 10]));
 
     // Let's turn it into a 2^3 root of unity.
-    root_of_unity = root_of_unity.pow(&[1 << 7]);
-    assert_eq!(Fr::one(), root_of_unity.pow(&[1 << 3]));
-    assert_eq!(Fr::from_str("20201").unwrap(), root_of_unity);
+    root_of_unity = root_of_unity.pow_vartime(&[1 << 7]);
+    assert_eq!(Fr::one(), root_of_unity.pow_vartime(&[1 << 3]));
+    assert_eq!(Fr::from(20201u64), root_of_unity);
 
     // Let's compute all the points in our evaluation domain.
     let mut points = Vec::with_capacity(8);
     for i in 0..8 {
-        points.push(root_of_unity.pow(&[i]));
+        points.push(root_of_unity.pow_vartime(&[i]));
     }
 
     // Let's compute t(tau) = (tau - p_0)(tau - p_1)...
     //                      = tau^8 - 1
-    let mut t_at_tau = tau.pow(&[8]);
+    let mut t_at_tau = tau.pow_vartime(&[8]);
     t_at_tau.sub_assign(&Fr::one());
     {
         let mut tmp = Fr::one();
@@ -160,8 +160,8 @@ fn test_xordemo() {
 
     // We expect our H query to be 7 elements of the form...
     // {tau^i t(tau) / delta}
-    let delta_inverse = delta.inverse().unwrap();
-    let gamma_inverse = gamma.inverse().unwrap();
+    let delta_inverse = delta.invert().unwrap();
+    let gamma_inverse = gamma.invert().unwrap();
     {
         let mut coeff = delta_inverse;
         coeff.mul_assign(&t_at_tau);
@@ -220,27 +220,27 @@ fn test_xordemo() {
 
     let u_i = [59158, 48317, 21767, 10402]
         .iter()
-        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .map(|e| Fr::from_str_vartime(&format!("{}", e)).unwrap())
         .collect::<Vec<Fr>>();
     let v_i = [0, 0, 60619, 30791]
         .iter()
-        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .map(|e| Fr::from_str_vartime(&format!("{}", e)).unwrap())
         .collect::<Vec<Fr>>();
     let w_i = [0, 23320, 41193, 41193]
         .iter()
-        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .map(|e| Fr::from_str_vartime(&format!("{}", e)).unwrap())
         .collect::<Vec<Fr>>();
 
     for (u, a) in u_i.iter().zip(&params.a[..]) {
         assert_eq!(u, a);
     }
 
-    for (v, b) in v_i	
-        .iter()	
-        .filter(|&&e| e != Fr::zero())	
-        .zip(&params.b_g1[..])	
-    {	
-        assert_eq!(v, b);	
+    for (v, b) in v_i
+        .iter()
+        .filter(|&&e| e != Fr::zero())
+        .zip(&params.b_g1[..])
+    {
+        assert_eq!(v, b);
     }
 
     for (v, b) in v_i
@@ -282,7 +282,10 @@ fn test_xordemo() {
     assert_eq!(delta, params.vk.delta_g1);
     assert_eq!(delta, params.vk.delta_g2);
 
-    let _pvk = prepare_verifying_key(&params.vk);
+    let pvk = prepare_verifying_key(&params.vk);
+
+    let r = Fr::from(27134u64);
+    let s = Fr::from(17146u64);
 
     let proof = {
         let c = XorDemo {
@@ -291,7 +294,7 @@ fn test_xordemo() {
             _marker: PhantomData,
         };
 
-        create_proof_batch(vec![c], &params).unwrap()
+        create_proof::<DummyEngine, _, _>(c, &params, r, s).unwrap()
     };
 
     // A(x) =
@@ -301,13 +304,14 @@ fn test_xordemo() {
     //  a_3 * (5539*x^7 + 27797*x^6 + 6045*x^5 + 56449*x^4 + 58974*x^3 + 36716*x^2 + 58468*x + 8064) +
     {
         // proof A = alpha + A(tau) + delta * r
-        // NOTE: delta * r is removed!
-        let mut expected_a = alpha;
+        let mut expected_a = delta;
+        expected_a.mul_assign(&r);
+        expected_a.add_assign(&alpha);
         expected_a.add_assign(&u_i[0]); // a_0 = 1
         expected_a.add_assign(&u_i[1]); // a_1 = 1
         expected_a.add_assign(&u_i[2]); // a_2 = 1
                                         // a_3 = 0
-        assert_eq!(proof[0].a, expected_a);
+        assert_eq!(proof.a, expected_a);
     }
 
     // B(x) =
@@ -317,13 +321,14 @@ fn test_xordemo() {
     // a_3 * (31177*x^7 + 44780*x^6 + 21752*x^5 + 42255*x^3 + 35861*x^2 + 33842*x + 48385)
     {
         // proof B = beta + B(tau) + delta * s
-        // NOTE: delta * s is removed!
-        let mut expected_b = beta;
+        let mut expected_b = delta;
+        expected_b.mul_assign(&s);
+        expected_b.add_assign(&beta);
         expected_b.add_assign(&v_i[0]); // a_0 = 1
         expected_b.add_assign(&v_i[1]); // a_1 = 1
         expected_b.add_assign(&v_i[2]); // a_2 = 1
                                         // a_3 = 0
-        assert_eq!(proof[0].b, expected_b);
+        assert_eq!(proof.b, expected_b);
     }
 
     // C(x) =
@@ -342,6 +347,22 @@ fn test_xordemo() {
     {
         let mut expected_c = Fr::zero();
 
+        // A * s
+        let mut tmp = proof.a;
+        tmp.mul_assign(&s);
+        expected_c.add_assign(&tmp);
+
+        // B * r
+        let mut tmp = proof.b;
+        tmp.mul_assign(&r);
+        expected_c.add_assign(&tmp);
+
+        // delta * r * s
+        let mut tmp = delta;
+        tmp.mul_assign(&r);
+        tmp.mul_assign(&s);
+        expected_c.sub_assign(&tmp);
+
         // L query answer
         // a_2 = 1, a_3 = 0
         expected_c.add_assign(&params.l[0]);
@@ -351,20 +372,17 @@ fn test_xordemo() {
             .iter()
             .enumerate()
         {
-            let coeff = Fr::from_str(&format!("{}", coeff)).unwrap();
+            let coeff = Fr::from_str_vartime(&format!("{}", coeff)).unwrap();
 
             let mut tmp = params.h[i];
             tmp.mul_assign(&coeff);
             expected_c.add_assign(&tmp);
         }
 
-        assert_eq!(expected_c, proof[0].c);
+        assert_eq!(expected_c, proof.c);
     }
 
-    // FIXME(dignifiedquire): The dummy engine does not correctly implement accumulation of the
-    // miller loops through mutliplication, which breaks this test.
-    // Need to figure out how to correctly update this test.
-    // assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
+    assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
 }
 
 #[test]
@@ -372,56 +390,55 @@ fn test_create_batch_single() {
     // test consistency between single and batch creation
     let g1 = Fr::one();
     let g2 = Fr::one();
-    let alpha = Fr::from_str("48577").unwrap();
-    let beta = Fr::from_str("22580").unwrap();
-    let gamma = Fr::from_str("53332").unwrap();
-    let delta = Fr::from_str("5481").unwrap();
-    let tau = Fr::from_str("3673").unwrap();
+    let alpha = Fr::from(48577u64);
+    let beta = Fr::from(22580u64);
+    let gamma = Fr::from(53332u64);
+    let delta = Fr::from(5481u64);
+    let tau = Fr::from(3673u64);
 
     let params = {
-        let c = XorDemo::<DummyEngine> {
+        let c = XorDemo::<Fr> {
             a: None,
             b: None,
             _marker: PhantomData,
         };
 
-        generate_parameters(c, g1, g2, alpha, beta, gamma, delta, tau).unwrap()
+        generate_parameters::<DummyEngine, _>(c, g1, g2, alpha, beta, gamma, delta, tau).unwrap()
     };
 
-    let _pvk = prepare_verifying_key(&params.vk);
+    let pvk = prepare_verifying_key(&params.vk);
 
-    let c = XORDemo {
+    let r1 = Fr::from(27134u64);
+    let s1 = Fr::from(17146u64);
+
+    let r2 = Fr::from(27132u64);
+    let s2 = Fr::from(17142u64);
+
+    let c = XorDemo {
         a: Some(true),
         b: Some(false),
         _marker: PhantomData,
     };
-    let proof_single_1 = create_proof_batch(vec![c.clone()], &params).unwrap();
-    let proof_single_2 = create_proof_batch(vec![c.clone()], &params).unwrap();
+    let proof_single_1 = create_proof(c.clone(), &params, r1, s1).unwrap();
+    let proof_single_2 = create_proof(c.clone(), &params, r2, s2).unwrap();
 
-    let proof_batch = create_proof_batch(
-        vec![c.clone(), c.clone()],
-        &params,
-    )
-    .unwrap();
+    let proof_batch =
+        create_proof_batch(vec![c.clone(), c], &params, vec![r1, r2], vec![s1, s2]).unwrap();
 
-    assert_eq!(proof_batch[0], proof_single_1[0]);
-    assert_eq!(proof_batch[1], proof_single_2[0]);
+    assert_eq!(proof_batch[0], proof_single_1);
+    assert_eq!(proof_batch[1], proof_single_2);
 
-    // FIXME(dignifiedquire): The dummy engine does not correctly implement accumulation of the
-    // miller loops through mutliplication, which breaks this test.
-    // Need to figure out how to correctly update this test.
-    // assert!(verify_proof(&pvk, &proof_single_1, &[Fr::one()]).unwrap());
-    // assert!(verify_proof(&pvk, &proof_single_2, &[Fr::one()]).unwrap());
-    // for proof in &proof_batch {
-    //     assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
-    // }
+    assert!(verify_proof(&pvk, &proof_single_1, &[Fr::one()]).unwrap());
+    assert!(verify_proof(&pvk, &proof_single_2, &[Fr::one()]).unwrap());
+    for proof in &proof_batch {
+        assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
+    }
 }
 
 #[test]
 fn test_verify_random_single() {
-    use crate::bls::{Bls12, Fr, G1Projective, G2Projective};
-    use crate::groth16::{generate_random_parameters, Proof};
-    use groupy::{CurveAffine, CurveProjective};
+    use crate::groth16::{create_random_proof, generate_random_parameters, Proof};
+    use blstrs::{Bls12, G1Projective, G2Projective, Scalar as Fr};
 
     let mut rng = XorShiftRng::from_seed([
         0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc,
@@ -429,7 +446,7 @@ fn test_verify_random_single() {
     ]);
 
     let params = {
-        let c = XorDemo::<Bls12> {
+        let c = XorDemo::<Fr> {
             a: None,
             b: None,
             _marker: PhantomData,
@@ -447,37 +464,37 @@ fn test_verify_random_single() {
             _marker: PhantomData,
         };
 
-        let proof = create_proof_batch(vec![c.clone()], &params).unwrap();
+        let proof = create_random_proof(c.clone(), &params, &mut rng).unwrap();
 
         // real proofs
-        assert!(verify_proof(&pvk, &proof[0], &[Fr::one()]).unwrap());
+        assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
 
         // mess up the inputs
         {
-            assert!(!verify_proof(&pvk, &proof[0], &[Fr::random(&mut rng)]).unwrap());
+            assert!(!verify_proof(&pvk, &proof, &[Fr::random(&mut rng)]).unwrap());
         }
 
         // mess up the proof a little bit
         {
-            let mut fake_proof = proof[0].clone();
-            fake_proof.a = fake_proof.a.mul(Fr::random(&mut rng)).into_affine();
+            let mut fake_proof = proof.clone();
+            fake_proof.a = fake_proof.a.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proof(&pvk, &fake_proof, &[Fr::one()]).unwrap());
         }
 
         {
-            let mut fake_proof = proof[0].clone();
-            fake_proof.b = fake_proof.b.mul(Fr::random(&mut rng)).into_affine();
+            let mut fake_proof = proof.clone();
+            fake_proof.b = fake_proof.b.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proof(&pvk, &fake_proof, &[Fr::one()]).unwrap());
         }
 
         {
-            let mut fake_proof = proof[0].clone();
-            fake_proof.c = fake_proof.c.mul(Fr::random(&mut rng)).into_affine();
+            let mut fake_proof = proof.clone();
+            fake_proof.c = fake_proof.c.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proof(&pvk, &fake_proof, &[Fr::one()]).unwrap());
         }
 
         {
-            let mut fake_proof = proof[0].clone();
+            let mut fake_proof = proof.clone();
             let c = fake_proof.c;
             fake_proof.c = fake_proof.a;
             fake_proof.a = c;
@@ -487,9 +504,9 @@ fn test_verify_random_single() {
         // entirely random proofs
         {
             let random_proof = Proof {
-                a: G1Projective::random(&mut rng).into_affine(),
-                b: G2Projective::random(&mut rng).into_affine(),
-                c: G1Projective::random(&mut rng).into_affine(),
+                a: G1Projective::random(&mut rng).to_affine(),
+                b: G2Projective::random(&mut rng).to_affine(),
+                c: G1Projective::random(&mut rng).to_affine(),
             };
             assert!(!verify_proof(&pvk, &random_proof, &[Fr::one()]).unwrap());
         }
@@ -498,11 +515,10 @@ fn test_verify_random_single() {
 
 #[test]
 fn test_verify_random_batch() {
-    use crate::bls::{Bls12, Fr, G1Projective, G2Projective};
     use crate::groth16::{
-        generate_random_parameters, verify_proofs_batch, Proof,
+        create_random_proof_batch, generate_random_parameters, verify_proofs_batch, Proof,
     };
-    use groupy::{CurveAffine, CurveProjective};
+    use blstrs::{Bls12, G1Projective, G2Projective, Scalar as Fr};
 
     let mut rng = XorShiftRng::from_seed([
         0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc,
@@ -510,7 +526,7 @@ fn test_verify_random_batch() {
     ]);
 
     let params = {
-        let c = XorDemo::<Bls12> {
+        let c = XorDemo::<Fr> {
             a: None,
             b: None,
             _marker: PhantomData,
@@ -530,7 +546,7 @@ fn test_verify_random_batch() {
         };
 
         let proof =
-        create_proof_batch(vec![c.clone(), c.clone(), c.clone()], &params)
+            create_random_proof_batch(vec![c.clone(), c.clone(), c.clone()], &params, &mut rng)
                 .unwrap();
 
         // real proofs
@@ -554,7 +570,7 @@ fn test_verify_random_batch() {
         // mess up the proof a little bit
         {
             let mut fake_proof = proof.clone();
-            fake_proof[0].a = fake_proof[0].a.mul(Fr::random(&mut rng)).into_affine();
+            fake_proof[0].a = fake_proof[0].a.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proofs_batch(
                 &pvk,
                 &mut rng,
@@ -566,7 +582,7 @@ fn test_verify_random_batch() {
 
         {
             let mut fake_proof = proof.clone();
-            fake_proof[1].b = fake_proof[1].b.mul(Fr::random(&mut rng)).into_affine();
+            fake_proof[1].b = fake_proof[1].b.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proofs_batch(
                 &pvk,
                 &mut rng,
@@ -578,7 +594,7 @@ fn test_verify_random_batch() {
 
         {
             let mut fake_proof = proof.clone();
-            fake_proof[2].c = fake_proof[2].c.mul(Fr::random(&mut rng)).into_affine();
+            fake_proof[2].c = fake_proof[2].c.mul(Fr::random(&mut rng)).to_affine();
             assert!(!verify_proofs_batch(
                 &pvk,
                 &mut rng,
@@ -606,19 +622,19 @@ fn test_verify_random_batch() {
         {
             let random_proof = [
                 Proof {
-                    a: G1Projective::random(&mut rng).into_affine(),
-                    b: G2Projective::random(&mut rng).into_affine(),
-                    c: G1Projective::random(&mut rng).into_affine(),
+                    a: G1Projective::random(&mut rng).to_affine(),
+                    b: G2Projective::random(&mut rng).to_affine(),
+                    c: G1Projective::random(&mut rng).to_affine(),
                 },
                 Proof {
-                    a: G1Projective::random(&mut rng).into_affine(),
-                    b: G2Projective::random(&mut rng).into_affine(),
-                    c: G1Projective::random(&mut rng).into_affine(),
+                    a: G1Projective::random(&mut rng).to_affine(),
+                    b: G2Projective::random(&mut rng).to_affine(),
+                    c: G1Projective::random(&mut rng).to_affine(),
                 },
                 Proof {
-                    a: G1Projective::random(&mut rng).into_affine(),
-                    b: G2Projective::random(&mut rng).into_affine(),
-                    c: G1Projective::random(&mut rng).into_affine(),
+                    a: G1Projective::random(&mut rng).to_affine(),
+                    b: G2Projective::random(&mut rng).to_affine(),
+                    c: G1Projective::random(&mut rng).to_affine(),
                 },
             ];
             assert!(!verify_proofs_batch(
