@@ -216,6 +216,31 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         self.aux_assignment.extend(other.aux_assignment);
     }
 
+    fn extend_from_element(&mut self, other: Self, unit: &Self){
+        self.b_input_density.extend_from_element(other.b_input_density, &unit.b_input_density);
+        self.a_aux_density.extend_from_element(other.a_aux_density, &unit.a_aux_density);
+        self.b_aux_density.extend_from_element(other.b_aux_density, &unit.b_aux_density);
+
+        if other.a.len() > unit.a.len() {
+            self.a.extend(&other.a[unit.a.len()..]);
+        }
+        if other.b.len() > unit.b.len() {
+            self.b.extend(&other.b[unit.b.len()..]);
+        }
+        if other.c.len() > unit.c.len() {
+            self.c.extend(&other.c[unit.c.len()..]);
+        }
+
+        if other.input_assignment.len() > unit.input_assignment.len() {
+            self.input_assignment
+            // Skip first input, which must have been a temporarily allocated one variable.
+            .extend(&other.input_assignment[unit.input_assignment.len()..]);
+        }
+
+        if other.aux_assignment.len() > unit.aux_assignment.len() {
+            self.aux_assignment.extend(&other.aux_assignment[unit.aux_assignment.len()..]);
+        }
+    }
 
     fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         let mut res = Vec::new();
@@ -248,6 +273,10 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         new_cs.aux_assignment = self.aux_assignment.clone();
 
         Ok(new_cs)
+    }
+
+    fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
+        self.extend_from_element(other, unit);
     }
 }
 
