@@ -178,6 +178,10 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
             std::any::type_name::<Self>()
         )
     }
+
+    fn part_aggregate_element(&mut self, mut _other: Self::Root, _unit: &Self::Root) {
+        panic!("parallel functional (fn part_aggregate_element) in not implemented for {}", std::any::type_name::<Self>())
+    }
 }
 
 /// This is a "namespaced" constraint system which borrows a constraint system (pushing
@@ -256,6 +260,11 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         self.0.make_copy()
     }
+
+    // Aggregate all data from other to self
+    fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
+        self.0.part_aggregate_element(other, unit)
+    }
 }
 
 impl<'a, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> Drop for Namespace<'a, Scalar, CS> {
@@ -330,5 +339,10 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
 
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         (**self).make_copy()
+    }
+
+    // Aggregate all data from other to self
+    fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
+        (**self).part_aggregate_element(other, unit)
     }
 }

@@ -279,6 +279,10 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
 
         Ok(new_cs)
     }
+
+    fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
+        self.extend_from_element(other, unit);
+    }
 }
 
 pub fn create_random_proof_batch_priority<E, C, R, P: ParameterSource<E>>(
