@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use std::convert::TryInto;
 use std::io;
 use std::iter;
@@ -238,7 +239,7 @@ impl DensityTracker {
         // Since any needed adjustments to total densities have been made, just sum the totals and keep the sum.
         self.total_density += other.total_density - unit.total_density;
     }
-  }
+}
 
 // Right shift the repr of a field element by `n` bits.
 fn shr(le_bytes: &mut [u8], mut n: u32) {
@@ -369,6 +370,7 @@ pub fn multiexp<Q, D, G, E, S>(
     bases: S,
     density_map: D,
     exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    //kern: &Option<Arc<Mutex<gpu::LockedMultiexpKernel<E>>>>,
     kern: &mut Option<gpu::LockedMultiexpKernel<E>>,
 ) -> Waiter<Result<<G as PrimeCurveAffine>::Curve, SynthesisError>>
 where
@@ -379,6 +381,8 @@ where
     E: Engine<Fr = G::Scalar>,
     S: SourceBuilder<G>,
 {
+    //if let Some(ref kern) = kern {
+    //    let ref mut kern = kern.lock();
     if let Some(ref mut kern) = kern {
         if let Ok(p) = kern.with(|k: &mut gpu::MultiexpKernel<E>| {
             let exps = density_map.as_ref().generate_exps::<E>(exponents.clone());

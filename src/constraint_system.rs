@@ -159,15 +159,24 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
     // Later these CSs can be aggregated to the one
     // It allows to calculate synthesize-functions in parallel for several copies of the CS and later aggregate them
     fn make_vector(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
-        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+        panic!(
+            "parallel functional (fn make_vector) in not implemented for {}",
+            std::any::type_name::<Self>()
+        )
     }
 
     fn make_vector_copy(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
-        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+        panic!(
+            "parallel functional (fn make_vector) in not implemented for {}",
+            std::any::type_name::<Self>()
+        )
     }
 
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
-        panic!("parallel functional (fn make_vector) in not implemented for {}", std::any::type_name::<Self>())
+        panic!(
+            "parallel functional (fn make_vector) in not implemented for {}",
+            std::any::type_name::<Self>()
+        )
     }
 }
 

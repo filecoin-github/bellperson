@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use std::ops::{AddAssign, Mul, MulAssign};
 use std::sync::Arc;
 use std::time::Instant;
@@ -216,10 +217,13 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         self.aux_assignment.extend(other.aux_assignment);
     }
 
-    fn extend_from_element(&mut self, other: Self, unit: &Self){
-        self.b_input_density.extend_from_element(other.b_input_density, &unit.b_input_density);
-        self.a_aux_density.extend_from_element(other.a_aux_density, &unit.a_aux_density);
-        self.b_aux_density.extend_from_element(other.b_aux_density, &unit.b_aux_density);
+    fn extend_from_element(&mut self, other: Self, unit: &Self) {
+        self.b_input_density
+            .extend_from_element(other.b_input_density, &unit.b_input_density);
+        self.a_aux_density
+            .extend_from_element(other.a_aux_density, &unit.a_aux_density);
+        self.b_aux_density
+            .extend_from_element(other.b_aux_density, &unit.b_aux_density);
 
         if other.a.len() > unit.a.len() {
             self.a.extend(&other.a[unit.a.len()..]);
@@ -233,12 +237,13 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
 
         if other.input_assignment.len() > unit.input_assignment.len() {
             self.input_assignment
-            // Skip first input, which must have been a temporarily allocated one variable.
-            .extend(&other.input_assignment[unit.input_assignment.len()..]);
+                // Skip first input, which must have been a temporarily allocated one variable.
+                .extend(&other.input_assignment[unit.input_assignment.len()..]);
         }
 
         if other.aux_assignment.len() > unit.aux_assignment.len() {
-            self.aux_assignment.extend(&other.aux_assignment[unit.aux_assignment.len()..]);
+            self.aux_assignment
+                .extend(&other.aux_assignment[unit.aux_assignment.len()..]);
         }
     }
 
@@ -246,7 +251,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         let mut res = Vec::new();
         for _ in 0..size {
             let mut new_cs = Self::new();
-            new_cs.alloc_input(|| "", || Ok(E::Fr::one()))?; // each CS has one
+            new_cs.alloc_input(|| "", || Ok(Scalar::one()))?; // each CS has one
             res.push(new_cs);
         }
         Ok(res)
@@ -381,7 +386,13 @@ where
         Ok(())
     })?;
 
-    let mut multiexp_kern = Some(LockedMultiexpKernel::<E>::new(log_d, priority));
+    info!("starting multiexp phase");
+    let multiexp_start = Instant::now();
+
+    //let multiexp_kern = Some(Arc::new(Mutex::new(LockedMultiexpKernel::<E>::new(
+    let mut multiexp_kern = Some(LockedMultiexpKernel::<E>::new(
+        log_d, priority,
+    ));
     let params_h = params_h.unwrap()?;
 
     let mut h_s = Vec::with_capacity(num_circuits);
@@ -395,6 +406,12 @@ where
         });
 
         debug!("multiexp h");
+
+        /*h_s = a_s
+            .into_par_iter()
+            .map(|a| multiexp(&worker, params_h.clone(), FullDensity, a, &multiexp_kern))
+            .collect::<Vec<_>>();
+        */
         for a in a_s.into_iter() {
             h_s.push(multiexp(
                 &worker,
@@ -428,6 +445,20 @@ where
         });
 
         debug!("multiexp l");
+        /*
+        l_s = aux_assignments
+            .par_iter()
+            .map(|aux| {
+                multiexp(
+                    &worker,
+                    params_l.clone(),
+                    FullDensity,
+                    aux.clone(),
+                    &multiexp_kern,
+                )
+            })
+            .collect::<Vec<_>>();
+        */
         for aux in aux_assignments.iter() {
             l_s.push(multiexp(
                 &worker,
@@ -446,9 +477,12 @@ where
 
     debug!("multiexp a b_g1 b_g2");
     let inputs = provers
-        .into_par_iter()
-        .zip(input_assignments.par_iter())
-        .zip(aux_assignments.par_iter())
+        //.into_par_iter()
+        .into_iter()
+        //.zip(input_assignments.par_iter())
+        .zip(input_assignments.iter())
+        //.zip(aux_assignments.par_iter())
+        .zip(aux_assignments.iter())
         .map(|((prover, input_assignment), aux_assignment)| {
             let a_inputs = multiexp(
                 &worker,
@@ -510,13 +544,21 @@ where
             )
         })
         .collect::<Vec<_>>();
+
+    //if let Some(multiexp_kern) = multiexp_kern {
+    //    drop(multiexp_kern.lock());
+    //}
     drop(multiexp_kern);
+
     drop(a_inputs_source);
     drop(a_aux_source);
     drop(b_g1_inputs_source);
     drop(b_g1_aux_source);
     drop(b_g2_inputs_source);
     drop(b_g2_aux_source);
+
+    let multiexp_time = multiexp_start.elapsed();
+    info!("multiexp phase time: {:?}", multiexp_time);
 
     debug!("proofs");
     let proofs = h_s
