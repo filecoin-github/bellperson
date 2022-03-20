@@ -1,4 +1,6 @@
+#[cfg(feature = "cpu_optimization")]
 use parking_lot::Mutex;
+
 use std::ops::{AddAssign, Mul, MulAssign};
 use std::sync::Arc;
 use std::time::Instant;
@@ -307,6 +309,7 @@ where
 }
 
 #[allow(clippy::clippy::needless_collect)]
+#[cfg(not(feature = "cpu_optimization"))]
 pub fn create_proof_batch_priority<E, C, P: ParameterSource<E>>(
     circuits: Vec<C>,
     params: P,
@@ -393,10 +396,7 @@ where
     info!("starting multiexp phase");
     let multiexp_start = Instant::now();
 
-    //let multiexp_kern = Some(Arc::new(Mutex::new(LockedMultiexpKernel::<E>::new(
-    let mut multiexp_kern = Some(LockedMultiexpKernel::<E>::new(
-        log_d, priority,
-    ));
+    let mut multiexp_kern = Some(LockedMultiexpKernel::<E>::new(log_d, priority));
     let params_h = params_h.unwrap()?;
 
     let mut h_s = Vec::with_capacity(num_circuits);
@@ -411,11 +411,6 @@ where
 
         debug!("multiexp h");
 
-        /*h_s = a_s
-            .into_par_iter()
-            .map(|a| multiexp(&worker, params_h.clone(), FullDensity, a, &multiexp_kern))
-            .collect::<Vec<_>>();
-        */
         for a in a_s.into_iter() {
             h_s.push(multiexp(
                 &worker,
@@ -449,20 +444,6 @@ where
         });
 
         debug!("multiexp l");
-        /*
-        l_s = aux_assignments
-            .par_iter()
-            .map(|aux| {
-                multiexp(
-                    &worker,
-                    params_l.clone(),
-                    FullDensity,
-                    aux.clone(),
-                    &multiexp_kern,
-                )
-            })
-            .collect::<Vec<_>>();
-        */
         for aux in aux_assignments.iter() {
             l_s.push(multiexp(
                 &worker,
@@ -481,11 +462,8 @@ where
 
     debug!("multiexp a b_g1 b_g2");
     let inputs = provers
-        //.into_par_iter()
         .into_iter()
-        //.zip(input_assignments.par_iter())
         .zip(input_assignments.iter())
-        //.zip(aux_assignments.par_iter())
         .zip(aux_assignments.iter())
         .map(|((prover, input_assignment), aux_assignment)| {
             let a_inputs = multiexp(
@@ -549,9 +527,6 @@ where
         })
         .collect::<Vec<_>>();
 
-    //if let Some(multiexp_kern) = multiexp_kern {
-    //    drop(multiexp_kern.lock());
-    //}
     drop(multiexp_kern);
 
     drop(a_inputs_source);
@@ -562,7 +537,7 @@ where
     drop(b_g2_aux_source);
 
     let multiexp_time = multiexp_start.elapsed();
-    info!("multiexp phase time: {:?}", multiexp_time);
+    println!("multiexp phase time: {:?}", multiexp_time);
 
     debug!("proofs");
     let proofs = h_s
@@ -628,7 +603,307 @@ where
     }
 
     let proof_time = start.elapsed();
-    info!("prover time: {:?}", proof_time);
+    println!("prover time: {:?}", proof_time);
+
+    Ok(proofs)
+}
+
+#[allow(clippy::clippy::needless_collect)]
+#[cfg(feature = "cpu_optimization")]
+pub fn create_proof_batch_priority<E, C, P: ParameterSource<E>>(
+    circuits: Vec<C>,
+    params: P,
+    r_s: Vec<E::Fr>,
+    s_s: Vec<E::Fr>,
+    priority: bool,
+) -> Result<Vec<Proof<E>>, SynthesisError>
+where
+    E: gpu::GpuEngine + MultiMillerLoop,
+    C: Circuit<E::Fr> + Send,
+{
+    info!("Bellperson {} is being used!", BELLMAN_VERSION);
+
+    let (start, mut provers, input_assignments, aux_assignments) =
+        create_proof_batch_priority_inner(circuits)?;
+
+    let worker = Worker::new();
+    let input_len = input_assignments[0].len();
+    let vk = params.get_vk(input_len)?.clone();
+    let n = provers[0].a.len();
+    let a_aux_density_total = provers[0].a_aux_density.get_total_density();
+    let b_input_density_total = provers[0].b_input_density.get_total_density();
+    let b_aux_density_total = provers[0].b_aux_density.get_total_density();
+    let aux_assignment_len = provers[0].aux_assignment.len();
+    let num_circuits = provers.len();
+
+    // Make sure all circuits have the same input len.
+    for prover in &provers {
+        assert_eq!(
+            prover.a.len(),
+            n,
+            "only equaly sized circuits are supported"
+        );
+        debug_assert_eq!(
+            a_aux_density_total,
+            prover.a_aux_density.get_total_density(),
+            "only identical circuits are supported"
+        );
+        debug_assert_eq!(
+            b_input_density_total,
+            prover.b_input_density.get_total_density(),
+            "only identical circuits are supported"
+        );
+        debug_assert_eq!(
+            b_aux_density_total,
+            prover.b_aux_density.get_total_density(),
+            "only identical circuits are supported"
+        );
+    }
+
+    let mut log_d = 0;
+    while (1 << log_d) < n {
+        log_d += 1;
+    }
+
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
+    let prio_lock = if priority {
+        trace!("acquiring priority lock");
+        Some(PriorityLock::lock())
+    } else {
+        None
+    };
+
+    let mut a_s = Vec::with_capacity(num_circuits);
+    let mut params_h = None;
+    let worker = &worker;
+    let provers_ref = &mut provers;
+    let params = &params;
+
+    THREAD_POOL.scoped(|s| -> Result<(), SynthesisError> {
+        let params_h = &mut params_h;
+        s.execute(move || {
+            debug!("get h");
+            *params_h = Some(params.get_h(n));
+        });
+
+        let mut fft_kern = Some(LockedFFTKernel::<E>::new(log_d, priority));
+        for prover in provers_ref {
+            a_s.push(execute_fft(worker, prover, &mut fft_kern)?);
+        }
+        Ok(())
+    })?;
+
+    info!("starting multiexp phase");
+    let multiexp_start = Instant::now();
+
+    let multiexp_kern = Some(Arc::new(Mutex::new(LockedMultiexpKernel::<E>::new(log_d, priority))));
+    let params_h = params_h.unwrap()?;
+
+    let mut h_s = Vec::with_capacity(num_circuits);
+    let mut params_l = None;
+
+    THREAD_POOL.scoped(|s| {
+        let params_l = &mut params_l;
+        s.execute(move || {
+            debug!("get l");
+            *params_l = Some(params.get_l(aux_assignment_len));
+        });
+
+        debug!("multiexp h");
+
+        h_s = a_s
+            .into_par_iter()
+            .map(|a| multiexp(&worker, params_h.clone(), FullDensity, a, &multiexp_kern))
+            .collect::<Vec<_>>();
+    });
+
+    let params_l = params_l.unwrap()?;
+
+    let mut l_s = Vec::with_capacity(num_circuits);
+    let mut params_a = None;
+    let mut params_b_g1 = None;
+    let mut params_b_g2 = None;
+    let a_aux_density_total = provers[0].a_aux_density.get_total_density();
+    let b_input_density_total = provers[0].b_input_density.get_total_density();
+    let b_aux_density_total = provers[0].b_aux_density.get_total_density();
+
+    THREAD_POOL.scoped(|s| {
+        let params_a = &mut params_a;
+        let params_b_g1 = &mut params_b_g1;
+        let params_b_g2 = &mut params_b_g2;
+        s.execute(move || {
+            debug!("get_a b_g1 b_g2");
+            *params_a = Some(params.get_a(input_len, a_aux_density_total));
+            *params_b_g1 = Some(params.get_b_g1(b_input_density_total, b_aux_density_total));
+            *params_b_g2 = Some(params.get_b_g2(b_input_density_total, b_aux_density_total));
+        });
+
+        debug!("multiexp l");
+        l_s = aux_assignments
+            .par_iter()
+            .map(|aux| {
+                multiexp(
+                    &worker,
+                    params_l.clone(),
+                    FullDensity,
+                    aux.clone(),
+                    &multiexp_kern,
+                )
+            })
+            .collect::<Vec<_>>();
+    });
+
+    debug!("get_a b_g1 b_g2");
+    let (a_inputs_source, a_aux_source) = params_a.unwrap()?;
+    let (b_g1_inputs_source, b_g1_aux_source) = params_b_g1.unwrap()?;
+    let (b_g2_inputs_source, b_g2_aux_source) = params_b_g2.unwrap()?;
+
+    debug!("multiexp a b_g1 b_g2");
+    let inputs = provers
+        .into_par_iter()
+        .zip(input_assignments.par_iter())
+        .zip(aux_assignments.par_iter())
+        .map(|((prover, input_assignment), aux_assignment)| {
+            let a_inputs = multiexp(
+                &worker,
+                a_inputs_source.clone(),
+                FullDensity,
+                input_assignment.clone(),
+                &multiexp_kern,
+            );
+
+            let a_aux = multiexp(
+                &worker,
+                a_aux_source.clone(),
+                Arc::new(prover.a_aux_density),
+                aux_assignment.clone(),
+                &multiexp_kern,
+            );
+
+            let b_input_density = Arc::new(prover.b_input_density);
+            let b_aux_density = Arc::new(prover.b_aux_density);
+
+            let b_g1_inputs = multiexp(
+                &worker,
+                b_g1_inputs_source.clone(),
+                b_input_density.clone(),
+                input_assignment.clone(),
+                &multiexp_kern,
+            );
+
+            let b_g1_aux = multiexp(
+                &worker,
+                b_g1_aux_source.clone(),
+                b_aux_density.clone(),
+                aux_assignment.clone(),
+                &multiexp_kern,
+            );
+
+            let b_g2_inputs = multiexp(
+                &worker,
+                b_g2_inputs_source.clone(),
+                b_input_density,
+                input_assignment.clone(),
+                &multiexp_kern,
+            );
+            let b_g2_aux = multiexp(
+                &worker,
+                b_g2_aux_source.clone(),
+                b_aux_density,
+                aux_assignment.clone(),
+                &multiexp_kern,
+            );
+
+            (
+                a_inputs,
+                a_aux,
+                b_g1_inputs,
+                b_g1_aux,
+                b_g2_inputs,
+                b_g2_aux,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(multiexp_kern) = multiexp_kern {
+        drop(multiexp_kern.lock());
+    }
+
+    drop(a_inputs_source);
+    drop(a_aux_source);
+    drop(b_g1_inputs_source);
+    drop(b_g1_aux_source);
+    drop(b_g2_inputs_source);
+    drop(b_g2_aux_source);
+
+    let multiexp_time = multiexp_start.elapsed();
+    println!("multiexp phase time: {:?}", multiexp_time);
+
+    debug!("proofs");
+    let proofs = h_s
+        .into_par_iter()
+        .zip(l_s.into_par_iter())
+        .zip(inputs.into_par_iter())
+        .zip(r_s.into_par_iter())
+        .zip(s_s.into_par_iter())
+        .map(
+            |(
+                (((h, l), (a_inputs, a_aux, b_g1_inputs, b_g1_aux, b_g2_inputs, b_g2_aux)), r),
+                s,
+            )| {
+                if (vk.delta_g1.is_identity() | vk.delta_g2.is_identity()).into() {
+                    // If this element is zero, someone is trying to perform a
+                    // subversion-CRS attack.
+                    return Err(SynthesisError::UnexpectedIdentity);
+                }
+
+                let mut g_a = vk.delta_g1.mul(r);
+                g_a.add_assign(&vk.alpha_g1);
+                let mut g_b = vk.delta_g2.mul(s);
+                g_b.add_assign(&vk.beta_g2);
+                let mut g_c;
+                {
+                    let mut rs = r;
+                    rs.mul_assign(&s);
+
+                    g_c = vk.delta_g1.mul(rs);
+                    g_c.add_assign(&vk.alpha_g1.mul(s));
+                    g_c.add_assign(&vk.beta_g1.mul(r));
+                }
+                let mut a_answer = a_inputs.wait()?;
+                a_answer.add_assign(&a_aux.wait()?);
+                g_a.add_assign(&a_answer);
+                a_answer.mul_assign(s);
+                g_c.add_assign(&a_answer);
+
+                let mut b1_answer = b_g1_inputs.wait()?;
+                b1_answer.add_assign(&b_g1_aux.wait()?);
+                let mut b2_answer = b_g2_inputs.wait()?;
+                b2_answer.add_assign(&b_g2_aux.wait()?);
+
+                g_b.add_assign(&b2_answer);
+                b1_answer.mul_assign(r);
+                g_c.add_assign(&b1_answer);
+                g_c.add_assign(&h.wait()?);
+                g_c.add_assign(&l.wait()?);
+
+                Ok(Proof {
+                    a: g_a.to_affine(),
+                    b: g_b.to_affine(),
+                    c: g_c.to_affine(),
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, SynthesisError>>()?;
+
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
+    {
+        trace!("dropping priority lock");
+        drop(prio_lock);
+    }
+
+    let proof_time = start.elapsed();
+    println!("prover time: {:?}", proof_time);
 
     Ok(proofs)
 }

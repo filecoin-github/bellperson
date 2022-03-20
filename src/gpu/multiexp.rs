@@ -9,6 +9,11 @@ use log::{error, info};
 use pairing::Engine;
 use rust_gpu_tools::{program_closures, Device, Program};
 
+#[cfg(feature = "cpu_optimization")]
+use rayon::prelude::{
+    IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator, ParallelSlice
+};
+
 use std::any::TypeId;
 use std::ops::AddAssign;
 use std::sync::{Arc, RwLock};
@@ -267,6 +272,7 @@ where
         })
     }
 
+    #[cfg(not(feature = "cpu_optimization"))]
     pub fn multiexp<G>(
         &mut self,
         pool: &Worker,
@@ -298,6 +304,8 @@ where
             if n > 0 {
                 results = vec![<G as PrimeCurveAffine>::Curve::identity(); self.kernels.len()];
 
+                let now = std::time::Instant::now();
+
                 for (((bases, exps), kern), result) in bases
                     .chunks(chunk_size)
                     .zip(exps.chunks(chunk_size))
@@ -324,6 +332,94 @@ where
                         }
                     });
                 }
+
+                println!("multiexp took: {}ms", now.elapsed().as_millis());
+            }
+
+            cpu_multiexp::<_, _, _, E, _>(
+                &pool,
+                (Arc::new(cpu_bases.to_vec()), 0),
+                FullDensity,
+                Arc::new(cpu_exps.to_vec()),
+                &mut None,
+            )
+        });
+
+        Arc::try_unwrap(error)
+            .expect("only one ref left")
+            .into_inner()
+            .unwrap()?;
+        let mut acc = <G as PrimeCurveAffine>::Curve::identity();
+        for r in results {
+            acc.add_assign(&r);
+        }
+
+        acc.add_assign(&cpu_acc.wait().unwrap());
+        Ok(acc)
+    }
+
+    #[cfg(feature = "cpu_optimization")]
+    pub fn multiexp<G>(
+        &mut self,
+        pool: &Worker,
+        bases: Arc<Vec<G>>,
+        exps: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+        skip: usize,
+        n: usize,
+    ) -> GPUResult<<G as PrimeCurveAffine>::Curve>
+    where
+        G: PrimeCurveAffine<Scalar = E::Fr>,
+    {
+        let num_devices = self.kernels.len();
+        // Bases are skipped by `self.1` elements, when converted from (Arc<Vec<G>>, usize) to Source
+        // https://github.com/zkcrypto/bellman/blob/10c5010fd9c2ca69442dc9775ea271e286e776d8/src/multiexp.rs#L38
+        let bases = &bases[skip..(skip + n)];
+        let exps = &exps[..n];
+
+        let cpu_n = ((n as f64) * get_cpu_utilization()) as usize;
+        let n = n - cpu_n;
+        let (cpu_bases, bases) = bases.split_at(cpu_n);
+        let (cpu_exps, exps) = exps.split_at(cpu_n);
+
+        let chunk_size = ((n as f64) / (num_devices as f64)).ceil() as usize;
+
+        let mut results = Vec::new();
+        let error = Arc::new(RwLock::new(Ok(())));
+
+        let cpu_acc = pool.scoped(|s| {
+            if n > 0 {
+                results = vec![<G as PrimeCurveAffine>::Curve::identity(); self.kernels.len()];
+
+                let now = std::time::Instant::now();
+
+                bases
+                    .par_chunks(chunk_size)
+                    .zip(exps.par_chunks(chunk_size))
+                    .zip(self.kernels.par_iter_mut())
+                    .zip(results.par_iter_mut())
+                    .for_each(|(((bases, exps), kern), result)| {
+                        let error = error.clone();
+                        s.execute(move || {
+                            let mut acc = <G as PrimeCurveAffine>::Curve::identity();
+                            for (bases, exps) in bases.chunks(kern.n).zip(exps.chunks(kern.n)) {
+                                if error.read().unwrap().is_err() {
+                                    break;
+                                }
+                                match kern.multiexp(bases, exps, bases.len()) {
+                                    Ok(result) => acc.add_assign(&result),
+                                    Err(e) => {
+                                        *error.write().unwrap() = Err(e);
+                                        break;
+                                    }
+                                }
+                            }
+                            if error.read().unwrap().is_ok() {
+                                *result = acc;
+                            }
+                        });
+                    });
+
+                println!("multiexp took: {}ms", now.elapsed().as_millis());
             }
 
             cpu_multiexp::<_, _, _, E, _>(

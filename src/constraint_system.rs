@@ -180,7 +180,10 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
     }
 
     fn part_aggregate_element(&mut self, mut _other: Self::Root, _unit: &Self::Root) {
-        panic!("parallel functional (fn part_aggregate_element) in not implemented for {}", std::any::type_name::<Self>())
+        panic!(
+            "parallel functional (fn part_aggregate_element) in not implemented for {}",
+            std::any::type_name::<Self>()
+        )
     }
 }
 
