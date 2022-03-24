@@ -1,4 +1,4 @@
-#[cfg(feature = "cpu_optimization")]
+#[cfg(feature = "cpu-optimization")]
 use parking_lot::Mutex;
 
 use std::ops::{AddAssign, Mul, MulAssign};
@@ -309,7 +309,7 @@ where
 }
 
 #[allow(clippy::clippy::needless_collect)]
-#[cfg(not(feature = "cpu_optimization"))]
+#[cfg(not(feature = "cpu-optimization"))]
 pub fn create_proof_batch_priority<E, C, P: ParameterSource<E>>(
     circuits: Vec<C>,
     params: P,
@@ -609,7 +609,7 @@ where
 }
 
 #[allow(clippy::clippy::needless_collect)]
-#[cfg(feature = "cpu_optimization")]
+#[cfg(feature = "cpu-optimization")]
 pub fn create_proof_batch_priority<E, C, P: ParameterSource<E>>(
     circuits: Vec<C>,
     params: P,

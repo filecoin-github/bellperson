@@ -1,4 +1,4 @@
-#[cfg(feature = "cpu_optimization")]
+#[cfg(feature = "cpu-optimization")]
 use parking_lot::Mutex;
 
 use std::convert::TryInto;
@@ -367,7 +367,7 @@ where
 
 /// Perform multi-exponentiation. The caller is responsible for ensuring the
 /// query size is the same as the number of exponents.
-#[cfg(not(feature = "cpu_optimization"))]
+#[cfg(not(feature = "cpu-optimization"))]
 pub fn multiexp<Q, D, G, E, S>(
     pool: &Worker,
     bases: S,
@@ -419,7 +419,7 @@ where
     #[cfg(not(any(feature = "cuda", feature = "opencl")))]
     result
 }
-#[cfg(feature = "cpu_optimization")]
+#[cfg(feature = "cpu-optimization")]
 pub fn multiexp<Q, D, G, E, S>(
   pool: &Worker,
   bases: S,

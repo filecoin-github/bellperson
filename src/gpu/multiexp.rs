@@ -9,7 +9,7 @@ use log::{error, info};
 use pairing::Engine;
 use rust_gpu_tools::{program_closures, Device, Program};
 
-#[cfg(feature = "cpu_optimization")]
+#[cfg(feature = "cpu-optimization")]
 use rayon::prelude::{
     IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator, ParallelSlice
 };
@@ -272,7 +272,7 @@ where
         })
     }
 
-    #[cfg(not(feature = "cpu_optimization"))]
+    #[cfg(not(feature = "cpu-optimization"))]
     pub fn multiexp<G>(
         &mut self,
         pool: &Worker,
@@ -358,7 +358,7 @@ where
         Ok(acc)
     }
 
-    #[cfg(feature = "cpu_optimization")]
+    #[cfg(feature = "cpu-optimization")]
     pub fn multiexp<G>(
         &mut self,
         pool: &Worker,

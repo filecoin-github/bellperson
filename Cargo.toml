@@ -65,10 +65,11 @@ sha2 = "0.9"
 
 
 [features]
-default = ["groth16"]
+default = ["groth16","cpu-optimization"]
 cuda = ["rust-gpu-tools/cuda", "ec-gpu", "ec-gpu-gen", "fs2", "blstrs/gpu"]
 opencl = ["rust-gpu-tools/opencl", "ec-gpu", "ec-gpu-gen", "fs2", "blstrs/gpu"]
 groth16 = []
+cpu-optimization = []
 
 # This feature disables/modifies long running tests to make the suitable for code coverage
 # reporting
