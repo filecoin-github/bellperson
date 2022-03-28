@@ -130,10 +130,10 @@ impl<E> FFTKernel<E>
 where
     E: Engine + GpuEngine,
 {
-    pub fn create(priority: bool) -> GPUResult<FFTKernel<E>> {
-        let lock = locks::GPULock::lock();
+    pub fn create(priority: bool, is_win_post: bool) -> GPUResult<FFTKernel<E>> {
+        let lock = locks::GPULock::lock(is_win_post);
 
-        let kernels: Vec<_> = Device::all()
+        let kernels_bak: Vec<_> = Device::all()
             .iter()
             .filter_map(|device| {
                 let kernel = SingleFftKernel::<E>::create(device, priority);
@@ -148,18 +148,37 @@ where
             })
             .collect();
 
-        if kernels.is_empty() {
+        if kernels_bak.is_empty() {
             return Err(GPUError::Simple("No working GPUs found!"));
         }
-        info!("FFT: {} working device(s) selected. ", kernels.len());
-        for (i, k) in kernels.iter().enumerate() {
+        info!("FFT: {} working device(s) selected. ", kernels_bak.len());
+        for (i, k) in kernels_bak.iter().enumerate() {
             info!("FFT: Device {}: {}", i, k.program.device_name(),);
         }
 
-        Ok(FFTKernel {
-            kernels,
-            _lock: lock,
-        })
+        if kernels_bak.len() > 1 {
+            if is_win_post {
+                kernels_bak.remove(1);
+                let kernels = kernels_bak;
+                Ok(FFTKernel::<E> {
+                    kernels,
+                    _lock: lock,
+                })
+            } else {
+                kernels_bak.remove(0);
+                let kernels = kernels_bak;
+                Ok(FFTKernel::<E> {
+                    kernels,
+                    _lock: lock,
+                })
+            }
+        } else {
+            let kernels = kernels_bak;
+            Ok(FFTKernel::<E> {
+                kernels,
+                _lock: lock,
+            })
+        }
     }
 
     /// Performs FFT on `a`

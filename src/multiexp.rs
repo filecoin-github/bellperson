@@ -421,56 +421,56 @@ where
 }
 #[cfg(feature = "cpu-optimization")]
 pub fn multiexp<Q, D, G, E, S>(
-  pool: &Worker,
-  bases: S,
-  density_map: D,
-  exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
-  kern: &Option<Arc<Mutex<gpu::LockedMultiexpKernel<E>>>>,
+    pool: &Worker,
+    bases: S,
+    density_map: D,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    kern: &Option<Arc<Mutex<gpu::LockedMultiexpKernel<E>>>>,
 ) -> Waiter<Result<<G as PrimeCurveAffine>::Curve, SynthesisError>>
 where
-  for<'a> &'a Q: QueryDensity,
-  D: Send + Sync + 'static + Clone + AsRef<Q>,
-  G: PrimeCurveAffine,
-  E: gpu::GpuEngine,
-  E: Engine<Fr = G::Scalar>,
-  S: SourceBuilder<G>,
+    for<'a> &'a Q: QueryDensity,
+    D: Send + Sync + 'static + Clone + AsRef<Q>,
+    G: PrimeCurveAffine,
+    E: gpu::GpuEngine,
+    E: Engine<Fr = G::Scalar>,
+    S: SourceBuilder<G>,
 {
-  if let Some(ref kern) = kern {
-      let ref mut kern = kern.lock();
-      if let Ok(p) = kern.with(|k: &mut gpu::MultiexpKernel<E>| {
-          let exps = density_map.as_ref().generate_exps::<E>(exponents.clone());
-          let (bss, skip) = bases.clone().get();
-          let n = exps.len();
-          k.multiexp(pool, bss, exps, skip, n)
-      }) {
-          return Waiter::done(Ok(p));
-      }
-  }
+    if let Some(ref kern) = kern {
+        let ref mut kern = kern.lock();
+        if let Ok(p) = kern.with(|k: &mut gpu::MultiexpKernel<E>| {
+            let exps = density_map.as_ref().generate_exps::<E>(exponents.clone());
+            let (bss, skip) = bases.clone().get();
+            let n = exps.len();
+            k.multiexp(pool, bss, exps, skip, n)
+        }) {
+            return Waiter::done(Ok(p));
+        }
+    }
 
-  let c = if exponents.len() < 32 {
-      3u32
-  } else {
-      (f64::from(exponents.len() as u32)).ln().ceil() as u32
-  };
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+    };
 
-  if let Some(query_size) = density_map.as_ref().get_query_size() {
-      // If the density map has a known query size, it should not be
-      // inconsistent with the number of exponents.
-      assert!(query_size == exponents.len());
-  }
+    if let Some(query_size) = density_map.as_ref().get_query_size() {
+        // If the density map has a known query size, it should not be
+        // inconsistent with the number of exponents.
+        assert!(query_size == exponents.len());
+    }
 
-  #[allow(clippy::let_and_return)]
-  let result = pool.compute(move || multiexp_inner(bases, density_map, exponents, c));
-  #[cfg(any(feature = "cuda", feature = "opencl"))]
-  {
-      // Do not give the control back to the caller till the
-      // multiexp is done. We may want to reacquire the GPU again
-      // between the multiexps.
-      let result = result.wait();
-      Waiter::done(result)
-  }
-  #[cfg(not(any(feature = "cuda", feature = "opencl")))]
-  result
+    #[allow(clippy::let_and_return)]
+    let result = pool.compute(move || multiexp_inner(bases, density_map, exponents, c));
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
+    {
+        // Do not give the control back to the caller till the
+        // multiexp is done. We may want to reacquire the GPU again
+        // between the multiexps.
+        let result = result.wait();
+        Waiter::done(result)
+    }
+    #[cfg(not(any(feature = "cuda", feature = "opencl")))]
+    result
 }
 
 #[test]
@@ -522,11 +522,15 @@ fn test_with_bls12() {
     assert_eq!(naive, fast);
 }
 
-pub fn create_multiexp_kernel<E>(_log_d: usize, priority: bool) -> Option<gpu::MultiexpKernel<E>>
+pub fn create_multiexp_kernel<E>(
+    _log_d: usize,
+    priority: bool,
+    is_win_post: bool,
+) -> Option<gpu::MultiexpKernel<E>>
 where
     E: Engine + gpu::GpuEngine,
 {
-    match gpu::MultiexpKernel::<E>::create(priority) {
+    match gpu::MultiexpKernel::<E>::create(priority, is_win_post) {
         Ok(k) => {
             info!("GPU Multiexp kernel instantiated!");
             Some(k)
