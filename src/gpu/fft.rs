@@ -133,7 +133,7 @@ where
     pub fn create(priority: bool, is_win_post: bool) -> GPUResult<FFTKernel<E>> {
         let lock = locks::GPULock::lock(is_win_post);
 
-        let kernels_bak: Vec<_> = Device::all()
+        let mut kernels_bak: Vec<_> = Device::all()
             .iter()
             .filter_map(|device| {
                 let kernel = SingleFftKernel::<E>::create(device, priority);
