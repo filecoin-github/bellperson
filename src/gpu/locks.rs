@@ -5,12 +5,8 @@ use std::path::PathBuf;
 
 const GPU_LOCK_NAME: &str = "bellman.gpu.lock";
 const PRIORITY_LOCK_NAME: &str = "bellman.priority.lock";
-fn tmp_path(filename: &str, is_win_post: bool) -> PathBuf {
+fn tmp_path(filename: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
-    if is_win_post {
-        let key = std::env::var("WINPOST_TMPDIR").unwrap();
-        p = PathBuf::from(key);
-    }
     p.push(filename);
     p
 }
@@ -20,8 +16,8 @@ fn tmp_path(filename: &str, is_win_post: bool) -> PathBuf {
 #[derive(Debug)]
 pub struct GPULock(File);
 impl GPULock {
-    pub fn lock(is_win_post: bool) -> GPULock {
-        let gpu_lock_file = tmp_path(GPU_LOCK_NAME, is_win_post);
+    pub fn lock() -> GPULock {
+        let gpu_lock_file = tmp_path(GPU_LOCK_NAME);
         debug!("Acquiring GPU lock at {:?} ...", &gpu_lock_file);
         let f = File::create(&gpu_lock_file)
             .unwrap_or_else(|_| panic!("Cannot create GPU lock file at {:?}", &gpu_lock_file));
@@ -44,8 +40,8 @@ impl Drop for GPULock {
 #[derive(Debug)]
 pub struct PriorityLock(File);
 impl PriorityLock {
-    pub fn lock(is_win_post: bool) -> PriorityLock {
-        let priority_lock_file = tmp_path(PRIORITY_LOCK_NAME, is_win_post);
+    pub fn lock() -> PriorityLock {
+        let priority_lock_file = tmp_path(PRIORITY_LOCK_NAME);
         debug!("Acquiring priority lock at {:?} ...", &priority_lock_file);
         let f = File::create(&priority_lock_file).unwrap_or_else(|_| {
             panic!(
@@ -58,9 +54,9 @@ impl PriorityLock {
         PriorityLock(f)
     }
 
-    pub fn wait(priority: bool, is_win_post: bool) {
+    pub fn wait(priority: bool) {
         if !priority {
-            if let Err(err) = File::create(tmp_path(PRIORITY_LOCK_NAME, is_win_post))
+            if let Err(err) = File::create(tmp_path(PRIORITY_LOCK_NAME))
                 .unwrap()
                 .lock_exclusive()
             {
@@ -73,7 +69,7 @@ impl PriorityLock {
         if priority {
             return false;
         }
-        if let Err(err) = File::create(tmp_path(PRIORITY_LOCK_NAME, false))
+        if let Err(err) = File::create(tmp_path(PRIORITY_LOCK_NAME))
             .unwrap()
             .try_lock_shared()
         {
@@ -110,7 +106,6 @@ macro_rules! locked_kernel {
         {
             log_d: usize,
             priority: bool,
-            is_win_post: bool,
             kernel: Option<$kern<E>>,
         }
 
@@ -118,20 +113,19 @@ macro_rules! locked_kernel {
         where
             E: pairing::Engine + crate::gpu::GpuEngine,
         {
-            pub fn new(log_d: usize, priority: bool, is_win_post: bool) -> $class<E> {
+            pub fn new(log_d: usize, priority: bool) -> $class<E> {
                 $class::<E> {
                     log_d,
                     priority,
-                    is_win_post,
                     kernel: None,
                 }
             }
 
             fn init(&mut self) {
                 if self.kernel.is_none() {
-                    PriorityLock::wait(self.priority, self.is_win_post);
+                    PriorityLock::wait(self.priority);
                     info!("GPU is available for {}!", $name);
-                    self.kernel = $func::<E>(self.log_d, self.priority, self.is_win_post);
+                    self.kernel = $func::<E>(self.log_d, self.priority);
                 }
             }
 

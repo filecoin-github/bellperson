@@ -198,9 +198,7 @@ fn main() {
 
         for _ in 0..opts.samples {
             let (_proofs, took) =
-                timer!(
-                    create_random_proof_batch(circuits.clone(), &params, &mut rng, false).unwrap()
-                );
+                timer!(create_random_proof_batch(circuits.clone(), &params, &mut rng).unwrap());
             println!("Proof generation finished in {}ms", took);
         }
     }
@@ -233,7 +231,7 @@ fn main() {
             }
             println!("(Generating valid proofs...)");
             let (proofs, took) =
-                timer!(create_random_proof_batch(circuits, &params, &mut rng, false).unwrap());
+                timer!(create_random_proof_batch(circuits, &params, &mut rng).unwrap());
             println!("Proof generation finished in {}ms", took);
 
             let pis = vec![inputs; opts.proofs];
