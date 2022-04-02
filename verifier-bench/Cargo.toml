@@ -18,7 +18,8 @@ pairing = "0.21"
 blstrs = "0.4.0"
 
 [features]
-default = ["groth16"]
+default = ["groth16", "cpu-optimization"]
 cuda = ["bellperson/cuda", "blstrs/gpu"]
 opencl = ["bellperson/opencl", "blstrs/gpu"]
 groth16 = ["bellperson/groth16"]
+cpu-optimization = ["bellperson/cpu-optimization"]
