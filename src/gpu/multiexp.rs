@@ -11,7 +11,7 @@ use rust_gpu_tools::{program_closures, Device, Program};
 
 #[cfg(feature = "cpu-optimization")]
 use rayon::prelude::{
-    IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator, ParallelSlice
+    IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator, ParallelSlice,
 };
 
 use std::any::TypeId;
@@ -304,8 +304,6 @@ where
             if n > 0 {
                 results = vec![<G as PrimeCurveAffine>::Curve::identity(); self.kernels.len()];
 
-                let now = std::time::Instant::now();
-
                 for (((bases, exps), kern), result) in bases
                     .chunks(chunk_size)
                     .zip(exps.chunks(chunk_size))
@@ -332,8 +330,6 @@ where
                         }
                     });
                 }
-
-                println!("multiexp took: {}ms", now.elapsed().as_millis());
             }
 
             cpu_multiexp::<_, _, _, E, _>(
@@ -419,7 +415,7 @@ where
                         });
                     });
 
-                println!("multiexp took: {}ms", now.elapsed().as_millis());
+                info!("multiexp took: {}ms", now.elapsed().as_millis());
             }
 
             cpu_multiexp::<_, _, _, E, _>(

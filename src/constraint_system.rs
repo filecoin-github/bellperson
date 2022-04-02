@@ -158,6 +158,7 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
     // Create a vector of CSs with the same porperties
     // Later these CSs can be aggregated to the one
     // It allows to calculate synthesize-functions in parallel for several copies of the CS and later aggregate them
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         panic!(
             "parallel functional (fn make_vector) in not implemented for {}",
@@ -165,6 +166,7 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
         )
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector_copy(&self, _size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         panic!(
             "parallel functional (fn make_vector) in not implemented for {}",
@@ -172,6 +174,7 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
         )
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         panic!(
             "parallel functional (fn make_vector) in not implemented for {}",
@@ -179,6 +182,7 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized + Send {
         )
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn part_aggregate_element(&mut self, mut _other: Self::Root, _unit: &Self::Root) {
         panic!(
             "parallel functional (fn part_aggregate_element) in not implemented for {}",
@@ -252,19 +256,23 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
         self.0.get_root()
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         self.0.make_vector(size)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector_copy(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         self.0.make_vector_copy(size)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         self.0.make_copy()
     }
 
     // Aggregate all data from other to self
+    #[cfg(feature = "cpu-optimization")]
     fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
         self.0.part_aggregate_element(other, unit)
     }
@@ -332,19 +340,23 @@ impl<'cs, Scalar: PrimeField, CS: ConstraintSystem<Scalar>> ConstraintSystem<Sca
         (**self).get_root()
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         (**self).make_vector(size)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector_copy(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         (**self).make_vector_copy(size)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         (**self).make_copy()
     }
 
     // Aggregate all data from other to self
+    #[cfg(feature = "cpu-optimization")]
     fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
         (**self).part_aggregate_element(other, unit)
     }

@@ -1,6 +1,3 @@
-#[cfg(feature = "cpu-optimization")]
-use parking_lot::Mutex;
-
 use std::ops::{AddAssign, Mul, MulAssign};
 use std::sync::Arc;
 use std::time::Instant;
@@ -219,6 +216,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         self.aux_assignment.extend(other.aux_assignment);
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn extend_from_element(&mut self, other: Self, unit: &Self) {
         self.b_input_density
             .extend_from_element(other.b_input_density, &unit.b_input_density);
@@ -249,6 +247,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         }
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         let mut res = Vec::new();
         for _ in 0..size {
@@ -259,6 +258,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         Ok(res)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_vector_copy(&self, size: usize) -> Result<Vec<Self::Root>, SynthesisError> {
         let mut res = Vec::new();
         for _ in 0..size {
@@ -267,6 +267,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         Ok(res)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn make_copy(&self) -> Result<Self::Root, SynthesisError> {
         let mut new_cs = Self::new();
 
@@ -282,6 +283,7 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for ProvingAssignment<Scalar> 
         Ok(new_cs)
     }
 
+    #[cfg(feature = "cpu-optimization")]
     fn part_aggregate_element(&mut self, other: Self::Root, unit: &Self::Root) {
         self.extend_from_element(other, unit);
     }
@@ -393,9 +395,6 @@ where
         Ok(())
     })?;
 
-    info!("starting multiexp phase");
-    let multiexp_start = Instant::now();
-
     let mut multiexp_kern = Some(LockedMultiexpKernel::<E>::new(log_d, priority));
     let params_h = params_h.unwrap()?;
 
@@ -410,7 +409,6 @@ where
         });
 
         debug!("multiexp h");
-
         for a in a_s.into_iter() {
             h_s.push(multiexp(
                 &worker,
@@ -526,9 +524,7 @@ where
             )
         })
         .collect::<Vec<_>>();
-
     drop(multiexp_kern);
-
     drop(a_inputs_source);
     drop(a_aux_source);
     drop(b_g1_inputs_source);
@@ -536,16 +532,13 @@ where
     drop(b_g2_inputs_source);
     drop(b_g2_aux_source);
 
-    let multiexp_time = multiexp_start.elapsed();
-    println!("multiexp phase time: {:?}", multiexp_time);
-
     debug!("proofs");
     let proofs = h_s
-        .into_par_iter()
-        .zip(l_s.into_par_iter())
-        .zip(inputs.into_par_iter())
-        .zip(r_s.into_par_iter())
-        .zip(s_s.into_par_iter())
+        .into_iter()
+        .zip(l_s.into_iter())
+        .zip(inputs.into_iter())
+        .zip(r_s.into_iter())
+        .zip(s_s.into_iter())
         .map(
             |(
                 (((h, l), (a_inputs, a_aux, b_g1_inputs, b_g1_aux, b_g2_inputs, b_g2_aux)), r),
@@ -603,7 +596,7 @@ where
     }
 
     let proof_time = start.elapsed();
-    println!("prover time: {:?}", proof_time);
+    info!("prover time: {:?}", proof_time);
 
     Ok(proofs)
 }
@@ -673,36 +666,40 @@ where
         None
     };
 
-    let mut a_s = Vec::with_capacity(num_circuits);
+    // let mut a_s = Vec::with_capacity(num_circuits);
     let mut params_h = None;
     let worker = &worker;
     let provers_ref = &mut provers;
     let params = &params;
 
-    THREAD_POOL.scoped(|s| -> Result<(), SynthesisError> {
+    let a_s = THREAD_POOL.scoped(|s| -> Result<_, SynthesisError> {
         let params_h = &mut params_h;
         s.execute(move || {
             debug!("get h");
             *params_h = Some(params.get_h(n));
         });
 
-        let mut fft_kern = Some(LockedFFTKernel::<E>::new(log_d, priority));
-        for prover in provers_ref {
-            a_s.push(execute_fft(worker, prover, &mut fft_kern)?);
-        }
-        Ok(())
+        // let mut fft_kern = Some(LockedFFTKernel::<E>::new(log_d, priority));
+
+        provers_ref
+            .into_par_iter()
+            .map(|prover| {
+                let mut fft_kern: Option<LockedFFTKernel<E>> = None;
+                execute_fft(worker, prover, &mut fft_kern)
+            })
+            .collect::<Result<Vec<_>, SynthesisError>>()
     })?;
 
     info!("starting multiexp phase");
     let multiexp_start = Instant::now();
 
-    let multiexp_kern = Some(Arc::new(Mutex::new(LockedMultiexpKernel::<E>::new(log_d, priority))));
+    // let multiexp_kern = Some(LockedMultiexpKernel::<E>::new(log_d, priority));
     let params_h = params_h.unwrap()?;
 
-    let mut h_s = Vec::with_capacity(num_circuits);
+    // let mut h_s = Vec::with_capacity(num_circuits);
     let mut params_l = None;
 
-    THREAD_POOL.scoped(|s| {
+    let h_s = THREAD_POOL.scoped(|s| {
         let params_l = &mut params_l;
         s.execute(move || {
             debug!("get l");
@@ -711,15 +708,23 @@ where
 
         debug!("multiexp h");
 
-        h_s = a_s
-            .into_par_iter()
-            .map(|a| multiexp(&worker, params_h.clone(), FullDensity, a, &multiexp_kern))
-            .collect::<Vec<_>>();
+        a_s.into_par_iter()
+            .map(|a| {
+                let mut multiexp_kern: Option<LockedMultiexpKernel<E>> = None;
+                multiexp(
+                    &worker,
+                    params_h.clone(),
+                    FullDensity,
+                    a,
+                    &mut multiexp_kern,
+                )
+            })
+            .collect::<Vec<_>>()
     });
 
     let params_l = params_l.unwrap()?;
 
-    let mut l_s = Vec::with_capacity(num_circuits);
+    // let mut l_s = Vec::with_capacity(num_circuits);
     let mut params_a = None;
     let mut params_b_g1 = None;
     let mut params_b_g2 = None;
@@ -727,7 +732,7 @@ where
     let b_input_density_total = provers[0].b_input_density.get_total_density();
     let b_aux_density_total = provers[0].b_aux_density.get_total_density();
 
-    THREAD_POOL.scoped(|s| {
+    let l_s = THREAD_POOL.scoped(|s| {
         let params_a = &mut params_a;
         let params_b_g1 = &mut params_b_g1;
         let params_b_g2 = &mut params_b_g2;
@@ -739,18 +744,19 @@ where
         });
 
         debug!("multiexp l");
-        l_s = aux_assignments
+        aux_assignments
             .par_iter()
             .map(|aux| {
+                let mut multiexp_kern: Option<LockedMultiexpKernel<E>> = None;
                 multiexp(
                     &worker,
                     params_l.clone(),
                     FullDensity,
                     aux.clone(),
-                    &multiexp_kern,
+                    &mut multiexp_kern,
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
     });
 
     debug!("get_a b_g1 b_g2");
@@ -764,12 +770,14 @@ where
         .zip(input_assignments.par_iter())
         .zip(aux_assignments.par_iter())
         .map(|((prover, input_assignment), aux_assignment)| {
+            let mut multiexp_kern: Option<LockedMultiexpKernel<E>> = None;
+
             let a_inputs = multiexp(
                 &worker,
                 a_inputs_source.clone(),
                 FullDensity,
                 input_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
 
             let a_aux = multiexp(
@@ -777,7 +785,7 @@ where
                 a_aux_source.clone(),
                 Arc::new(prover.a_aux_density),
                 aux_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
 
             let b_input_density = Arc::new(prover.b_input_density);
@@ -788,7 +796,7 @@ where
                 b_g1_inputs_source.clone(),
                 b_input_density.clone(),
                 input_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
 
             let b_g1_aux = multiexp(
@@ -796,7 +804,7 @@ where
                 b_g1_aux_source.clone(),
                 b_aux_density.clone(),
                 aux_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
 
             let b_g2_inputs = multiexp(
@@ -804,14 +812,14 @@ where
                 b_g2_inputs_source.clone(),
                 b_input_density,
                 input_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
             let b_g2_aux = multiexp(
                 &worker,
                 b_g2_aux_source.clone(),
                 b_aux_density,
                 aux_assignment.clone(),
-                &multiexp_kern,
+                &mut multiexp_kern,
             );
 
             (
@@ -825,10 +833,7 @@ where
         })
         .collect::<Vec<_>>();
 
-    if let Some(multiexp_kern) = multiexp_kern {
-        drop(multiexp_kern.lock());
-    }
-
+    // drop(multiexp_kern);
     drop(a_inputs_source);
     drop(a_aux_source);
     drop(b_g1_inputs_source);
@@ -837,15 +842,15 @@ where
     drop(b_g2_aux_source);
 
     let multiexp_time = multiexp_start.elapsed();
-    println!("multiexp phase time: {:?}", multiexp_time);
+    info!("multiexp phase time: {:?}", multiexp_time);
 
     debug!("proofs");
     let proofs = h_s
-        .into_par_iter()
-        .zip(l_s.into_par_iter())
-        .zip(inputs.into_par_iter())
-        .zip(r_s.into_par_iter())
-        .zip(s_s.into_par_iter())
+        .into_iter()
+        .zip(l_s.into_iter())
+        .zip(inputs.into_iter())
+        .zip(r_s.into_iter())
+        .zip(s_s.into_iter())
         .map(
             |(
                 (((h, l), (a_inputs, a_aux, b_g1_inputs, b_g1_aux, b_g2_inputs, b_g2_aux)), r),
@@ -903,7 +908,7 @@ where
     }
 
     let proof_time = start.elapsed();
-    println!("prover time: {:?}", proof_time);
+    info!("prover time: {:?}", proof_time);
 
     Ok(proofs)
 }
